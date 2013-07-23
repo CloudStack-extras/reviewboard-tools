@@ -32,6 +32,8 @@ jenkins_user = "XXXXXXXX"
 jenkins_pass = "XXXXXXXX"
 jenkins_job  = "cloudstack-master-with-patch"
 
+max_reviews_per_run = 1
+
 def retrieve_object(url, params):
     r = requests.get(url, params=params)
     response = json.loads(r.text)
@@ -52,46 +54,42 @@ def get_repository_id_for_name(name):
 def pretty_print(json_object):
     print json.dumps(json_object, sort_keys=True, indent=4, separators=(',', ': '))
 
-def trigger_jenkins(review_id, branch, patch_file):
-    r = requests.get(jenkins_url + "/job/" + jenkins_job + "/api/json")
-    build_details = json.loads(r.text)
+def wait_for_job_completion(build_details):
     next_build = build_details['nextBuildNumber']
     job_str = "[ " + jenkins_job + "#" + str(next_build )+ " ] "
     
-    print "Triggering jenkins jobs " + jenkins_job + "#" + str(next_build) + " for review_request " + str(review_id) + " on branch " + branch
+    while build_details['lastBuild']['number'] < next_build:
+        print job_str + " is pending"
+        time.sleep(15) # TODO Implement some sort of timeout
+        r = requests.get(jenkins_url + "/job/" + jenkins_job + "/api/json")
+        build_details = json.loads(r.text)
+    print job_str + " is running"
+    r = requests.get(jenkins_url + "/job/" + jenkins_job + "/" + str(next_build) + "/api/json")
+    build_status = json.loads(r.text)
+    while build_status['building'] == True :
+        print job_str + " is running"
+        time.sleep(15) # TODO Implement some sort of timeout
+        r = requests.get(jenkins_url + "/job/" + jenkins_job + "/" + str(next_build) + "/api/json")
+        build_status = json.loads(r.text)
+    return build_status
+
+def trigger_jenkins(review_id, branch, patch_file):
+    r = requests.get(jenkins_url + "/job/" + jenkins_job + "/api/json")
+    build_details = json.loads(r.text)
+    
+    print "Triggering jenkins jobs " + jenkins_job + "#" + str(build_details['nextBuildNumber']) + " for review_request " + str(review_id) + " on branch " + branch
+    # parameters to pass to jenkins
+    #  patch.diff: the patch file
+    #  review_id : the id of the review
+    #  branch    : the branch to use (defaults to master)
     files = {'patch.diff': ('patch.diff', patch_file)}
     r=requests.post(jenkins_url + "/job/" + jenkins_job + "/buildWithParameters", auth=(jenkins_user,jenkins_pass), files=files)
     if (r.status_code == 404):
         raise Exception("Job " + jenkins_job + " not found on " + jenkins_url)
     if (r.status_code != 200):
         raise Exception("Failed to trigger job " + jenkins_job + " on " + jenkins_url)
-    while build_details['lastBuild']['number'] < next_build:
-        print "Job is still pending"
-        time.sleep(15) # TODO Implement some sort of timeout
-        r = requests.get(jenkins_url + "/job/" + jenkins_job + "/api/json")
-        build_details = json.loads(r.text)
-    print "Build is running"
-    r = requests.get(jenkins_url + "/job/" + jenkins_job + "/" + str(next_build) + "/api/json")
-    build_status = json.loads(r.text)
-    while build_status['building'] == True :
-        print "Job is still building"
-        time.sleep(15) # TODO Implement some sort of timeout
-        r = requests.get(jenkins_url + "/job/" + jenkins_job + "/" + str(next_build) + "/api/json")
-        build_status = json.loads(r.text)
-    # TODO Check if this is my build by comparing review id
-    print "Build completed, checking results"
-    message = ""
-    shipit = False
-    if build_status['result'] == "SUCCESS" :
-        message += "Review " + str(review_id) + " PASSED the build test\n"
-        shipit = False
-    else:
-        message += "Review " + str(review_id) + " failed the build test : " + build_status['result'] + "\n"
-        
-    message += "The url of build " + build_status['fullDisplayName'] + " is : " + build_status['url']
-    print "Updating review with comment : " + message
-    update_review(review_id, message, shipit)
-    
+    return build_details
+
 def update_review(reviewrequest_id, message, ship_it):
     params = { "body_top" : message, "public" : True, "ship_it" : ship_it }
     auth = (review_user,review_pass)
@@ -108,7 +106,7 @@ def update_review(reviewrequest_id, message, ship_it):
 def check_reviews():
     repoid = get_repository_id_for_name('cloudstack-git')
 
-    params = { 'repository' : repoid, 'max-results': 1}
+    params = { 'repository' : repoid, 'max-results': max_reviews_per_run}
     review_requests = retrieve_object('http://reviews.apache.org/api/review-requests', params)
     
     for review_request in review_requests['review_requests']:
@@ -145,14 +143,29 @@ def check_reviews():
                     # Regular patch file
                     patch_file = r.text
                 elif line.startswith('From '):
-                    # Git format-patch
+                    # Git format-patch, strip header and footer
                     while not line.startswith('diff'):
                         line = buf.readline()
                     while not (line.rstrip() == '--'):
                         patch_file += line
                         line = buf.readline()
                                     
-                trigger_jenkins(review_request['id'], branch, patch_file)
+                build_details = trigger_jenkins(review_request['id'], branch, patch_file)
+                build_status = wait_for_job_completion(build_details, build_details)
+
+                # TODO Check if this is my build by comparing review id
+                print job_str + " completed, checking results"
+                message = ""
+                shipit = False
+                if build_status['result'] == "SUCCESS" :
+                    message += "Review " + str(review_id) + " PASSED the build test\n"
+                    shipit = True
+                else:
+                    message += "Review " + str(review_id) + " failed the build test : " + build_status['result'] + "\n"
+                message += "The url of build " + build_status['fullDisplayName'] + " is : " + build_status['url']
+
+                print "Updating review with comment : " + message
+                update_review(review_id, message, shipit)
             else:
                 print "No diff files found for this review, nothing to test"
         else:
@@ -161,7 +174,17 @@ def check_reviews():
 try:
     config = ConfigParser.ConfigParser()
     config.readfp(open("reviewboard_testpatch.ini"))
-    # TODO read and set globals
+
+    review_url   = config.get("reviewboard", "url")
+    review_user  = config.get("reviewboard", "username")
+    review_pass  = config.get("reviewboard", "password")
+
+    jenkins_url  = config.get("jenkins", "url")
+    jenkins_user = config.get("jenkins", "username")
+    jenkins_pass = config.get("jenkins", "password")
+    jenkins_job  = config.get("jenkins", "job")
+
+    max_reviews_per_run = config.get("general", "maxreviews")
 except:
     raise Exception("Unable to read configuration file")
 
