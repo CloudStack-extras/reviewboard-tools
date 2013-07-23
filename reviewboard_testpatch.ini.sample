@@ -1,0 +1,13 @@
+[general]
+maxreviews = 1
+
+[jenkins]
+url = http://jenkins.cloudstack.org
+username = XXXXXXXX
+password = XXXXXXXX
+job = cloudstack-master-with-patch
+
+[reviewboard]
+url = http://reviews.apache.org
+username = XXXXXXXX
+password = XXXXXXXX
