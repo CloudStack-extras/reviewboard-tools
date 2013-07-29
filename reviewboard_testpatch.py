@@ -56,7 +56,7 @@ def pretty_print(json_object):
 
 def wait_for_job_completion(build_details):
     next_build = build_details['nextBuildNumber']
-    job_str = "[ " + jenkins_job + "#" + str(next_build )+ " ] "
+    job_str = "[ " + jenkins_job + "#" + str(next_build )+ " ]"
     
     while build_details['lastBuild']['number'] < next_build:
         print job_str + " is pending"
@@ -71,6 +71,7 @@ def wait_for_job_completion(build_details):
         time.sleep(15) # TODO Implement some sort of timeout
         r = requests.get(jenkins_url + "/job/" + jenkins_job + "/" + str(next_build) + "/api/json")
         build_status = json.loads(r.text)
+    print job_str + " completed with status " + build_status['result']
     return build_status
 
 def trigger_jenkins(review_id, branch, patch_file):
@@ -87,7 +88,7 @@ def trigger_jenkins(review_id, branch, patch_file):
     if (r.status_code == 404):
         raise Exception("Job " + jenkins_job + " not found on " + jenkins_url)
     if (r.status_code != 200):
-        raise Exception("Failed to trigger job " + jenkins_job + " on " + jenkins_url)
+        raise Exception("Failed to trigger job " + jenkins_job + " on " + jenkins_url + ", status code " + str(r.status_code))
     return build_details
 
 def update_review(reviewrequest_id, message, ship_it):
@@ -115,8 +116,10 @@ def check_reviews():
             print "Review has state " + review_request['status'] + " skipping jenkins build"
             continue
 
+        branch = review_request['branch']
+        review_id = review_request['id']
+
         # TODO Add support for multiple branches, for now assume everything is for master
-        #branch = review_request['branch']
         #if branch=="":
         branch = "master"
         
@@ -151,10 +154,9 @@ def check_reviews():
                         line = buf.readline()
                                     
                 build_details = trigger_jenkins(review_request['id'], branch, patch_file)
-                build_status = wait_for_job_completion(build_details, build_details)
+                build_status = wait_for_job_completion(build_details)
 
                 # TODO Check if this is my build by comparing review id
-                print job_str + " completed, checking results"
                 message = ""
                 shipit = False
                 if build_status['result'] == "SUCCESS" :
