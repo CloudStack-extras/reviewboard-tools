@@ -100,7 +100,31 @@ def update_review(reviewrequest_id, message, ship_it):
         pretty_print(response)
         raise Exception("Exception while retrieving object")
     pretty_print( response)
-    
+
+# needs_review
+# get the date of the last review by 'review_user'
+# get the date of the last upload of 'theDiff'
+# decide by the dates whether review is neccessary
+def needs_review(review_request):
+    reviews = retrieve_object(review_url + "/api/review-requests/" + str(review_request['id']) + "/reviews/", {'max-results':1000})
+    diffs = retrieve_object(review_request['links']['diffs']['href'], None)
+    revision = diffs['total_results']
+    if revision < 1:
+        print "no diff found!?!"
+        return False
+    latest_diff = diffs['diffs'][revision-1]
+    latest_upload_date = latest_diff['timestamp']
+    print "time of latest upload: " + latest_upload_date
+    for review in reviews['reviews']:
+        reviewer = review['links']['user']['title']
+        if (reviewer == review_user):
+            latest_review_date = review['timestamp']
+#             print reviewer + " reviewed at " + latest_review_date
+            if latest_review_date > latest_upload_date:
+                return False
+#     print "pending review since " + latest_upload_date
+    return True
+
 # check_reviews
 # This function will connect to reviewboard and check if then jenkins user has posted any reviews.
 # if it didn't it will trigger a jenkins build with the review id and branch for that review
@@ -123,14 +147,7 @@ def check_reviews():
         #if branch=="":
         branch = "master"
         
-        # load the reviews for this request
-        reviews = retrieve_object(review_url + "/api/review-requests/" + str(review_request['id']) + "/reviews/", {'max-results':1000})
-        reviewed = False
-        for review in reviews['reviews']:
-            reviewer = review['links']['user']['title']
-            if (reviewer == review_user):
-                reviewed = True
-                break
+        reviewed = not needs_review(review_request)
 
         if not reviewed:
             if review_request['links'].has_key('diffs'):
