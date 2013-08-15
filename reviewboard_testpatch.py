@@ -148,8 +148,8 @@ def check_reviews():
         review_id = review_request['id']
 
         # TODO Add support for multiple branches, for now assume everything is for master
-        if branch=="" or branch.contains("master"):
-           branch = "master"
+        #if branch=="" or branch.contains("master"):
+        branch = "master"
 
         if needs_review(review_request):
             diffs = retrieve_object(review_request['links']['diffs']['href'], None)
