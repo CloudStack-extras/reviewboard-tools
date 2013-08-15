@@ -126,6 +126,9 @@ def needs_review(review_request):
 #             print reviewer + " reviewed at " + latest_review_date
             if latest_review_date > latest_upload_date:
                 return False
+        if review['ship_it'] == True :
+            # Already shipped, skip it
+            return False
 #     print "pending review since " + latest_upload_date
     return True
 
@@ -139,7 +142,7 @@ def check_reviews():
     review_requests = retrieve_object('http://reviews.apache.org/api/review-requests', params)
     
     for review_request in review_requests['review_requests']:
-        print review_request['summary'] + " (" + review_request['status'] + ") "
+        print "[ review " + str(review_request['id']) + " ] " + review_request['summary'] + " (" + review_request['status'] + ") "
         if not review_request['status'] == "pending":
             print "Review has state " + review_request['status'] + " skipping jenkins build"
             continue
