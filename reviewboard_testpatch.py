@@ -107,8 +107,12 @@ def update_review(reviewrequest_id, message, ship_it):
 # decide by the dates whether review is neccessary
 def needs_review(review_request):
     reviews = retrieve_object(review_url + "/api/review-requests/" + str(review_request['id']) + "/reviews/", {'max-results':1000})
+    if not review_request['links'].has_key('diffs'):
+       print "No diff files found for this review, nothing to test"
+       return False
     diffs = retrieve_object(review_request['links']['diffs']['href'], None)
     revision = diffs['total_results']
+#    seems redundant but it fixes some strange bug; investigate?
     if revision < 1:
         print "no diff found!?!"
         return False
@@ -144,52 +148,47 @@ def check_reviews():
         review_id = review_request['id']
 
         # TODO Add support for multiple branches, for now assume everything is for master
-        #if branch=="":
-        branch = "master"
-        
-        reviewed = not needs_review(review_request)
+        if branch=="" or branch.contains("master"):
+           branch = "master"
 
-        if not reviewed:
-            if review_request['links'].has_key('diffs'):
-                diffs = retrieve_object(review_request['links']['diffs']['href'], None)
-                revision = diffs['total_results']
-                latest_diff = diffs['diffs'][revision-1]
-                headers = { "Accept" : "text/x-patch" }
-                r = requests.get(latest_diff['links']['self']['href'], headers=headers)
-                buf = StringIO.StringIO(r.text)
-                line = buf.readline()
-                patch_file = ''
-                if line.startswith('diff'):
-                    # Regular patch file
-                    patch_file = r.text
-                elif line.startswith('From '):
-                    # Git format-patch, strip header and footer
-                    while not line.startswith('diff'):
-                        line = buf.readline()
-                    while not (line.rstrip() == '--'):
-                        patch_file += line
-                        line = buf.readline()
-                                    
-                build_details = trigger_jenkins(review_request['id'], branch, patch_file)
-                build_status = wait_for_job_completion(build_details)
+        if needs_review(review_request):
+            diffs = retrieve_object(review_request['links']['diffs']['href'], None)
+            revision = diffs['total_results']
+            latest_diff = diffs['diffs'][revision-1]
+            headers = { "Accept" : "text/x-patch" }
+            r = requests.get(latest_diff['links']['self']['href'], headers=headers)
+            buf = StringIO.StringIO(r.text)
+            line = buf.readline()
+            patch_file = ''
+            if line.startswith('diff'):
+                # Regular patch file
+                patch_file = r.text
+            elif line.startswith('From '):
+                # Git format-patch, strip header and footer
+                while not line.startswith('diff'):
+                    line = buf.readline()
+                while not (line.rstrip() == '--'):
+                    patch_file += line
+                    line = buf.readline()
 
-                # TODO Check if this is my build by comparing review id
-                message = ""
-                shipit = False
-                if build_status['result'] == "SUCCESS" :
-                    message += "Review " + str(review_id) + " PASSED the build test\n"
-                    shipit = True
-                else:
-                    message += "Review " + str(review_id) + " failed the build test : " + build_status['result'] + "\n"
-                message += "The url of build " + build_status['fullDisplayName'] + " is : " + build_status['url']
+            build_details = trigger_jenkins(review_request['id'], branch, patch_file)
+            build_status = wait_for_job_completion(build_details)
 
-                print "Updating review with comment : " + message
-                update_review(review_id, message, shipit)
+            # TODO Check if this is my build by comparing review id
+            message = ""
+            shipit = False
+            if build_status['result'] == "SUCCESS" :
+                message += "Review " + str(review_id) + " PASSED the build test\n"
+                shipit = True
             else:
-                print "No diff files found for this review, nothing to test"
+                message += "Review " + str(review_id) + " failed the build test : " + build_status['result'] + "\n"
+            message += "The url of build " + build_status['fullDisplayName'] + " is : " + build_status['url']
+
+            print "Updating review with comment : " + message
+            update_review(review_id, message, shipit)
         else:
             print "Already reviewed"
-            
+
 try:
     config = ConfigParser.ConfigParser()
     config.readfp(open("reviewboard_testpatch.ini"))
