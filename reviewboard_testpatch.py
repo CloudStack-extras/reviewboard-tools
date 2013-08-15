@@ -99,7 +99,7 @@ def update_review(reviewrequest_id, message, ship_it):
     if response['stat'] != "ok":
         pretty_print(response)
         raise Exception("Exception while retrieving object")
-    pretty_print( response)
+    print "review " + str(reviewrequest_id) + " updated"
 
 # needs_review
 # get the date of the last review by 'review_user'
